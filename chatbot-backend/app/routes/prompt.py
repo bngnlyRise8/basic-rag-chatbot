@@ -11,6 +11,7 @@ from app.services.conversation import (
 from app.db.vectorstore import get_vectorstore
 from app.db.models import MessageRole
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +47,31 @@ async def ask_question(
         # Get vectorstore with connection from pool
         vectorstore = await get_vectorstore()
         
-        # Search for relevant documents
-        document_chunks = await search_documents(request.question, vectorstore, k=5)
+        # Search for relevant documents with similarity threshold
+        # Get up to 10 documents but only keep those above similarity threshold
+        similarity_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7"))
+        logger.info(f"Using similarity threshold: {similarity_threshold}")
+        
+        document_chunks = await search_documents(
+            request.question, 
+            vectorstore, 
+            k=10, 
+            similarity_threshold=similarity_threshold
+        )
         
         # Get conversation history for context
         history = await get_conversation_history(conv_id, limit=10)
         
-        # Build context from documents
-        context = "\n\n".join([
-            f"Source: {chunk['source_filename']}\nContent: {chunk['content']}"
-            for chunk in document_chunks
-        ])
+        # Build context from documents and messages
+        if document_chunks:
+            context = "\n\n".join([
+                f"Source: {chunk['source_filename']} (Relevance: {chunk['similarity_score']:.2f})\nContent: {chunk['content']}"
+                for chunk in document_chunks
+            ])
+            current_message = f"""Context from documents: {context}\n\nCurrent question: {request.question}"""
+        else:
+            # No documents met the similarity threshold
+            current_message = f"""No relevant documents were found in the knowledge base for this question. Please answer based on the conversation history if applicable, or indicate that you don't have relevant information.\n\nCurrent question: {request.question}"""
         
         # Build messages with conversation history
         messages = [
@@ -72,7 +87,6 @@ async def ask_question(
                 messages.append(AIMessage(content=msg["content"]))
         
         # Add current question with document context
-        current_message = f"""Context from documents: {context} Current question: {request.question}"""
         messages.append(HumanMessage(content=current_message))
         
         # Generate answer using LLM

@@ -4,7 +4,7 @@ from langchain_postgres import PGVector
 from app.services.embedder import process_and_store_pdf_file, generate_file_hash, check_document_exists
 from app.db.vectorstore import get_vectorstore
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List
 from sqlalchemy import text
 import logging
 

@@ -11,19 +11,26 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-async def search_documents(query: str, vectorstore: PGVector, k: int = 3) -> List[Dict[str, Any]]:
+async def search_documents(query: str, vectorstore: PGVector, k: int = 10, similarity_threshold: float = 0.7) -> List[Dict[str, Any]]:
     try:
-        results = await vectorstore.asimilarity_search(query, k=k)
+        # Get more documents with similarity scores
+        results_with_scores = await vectorstore.asimilarity_search_with_relevance_scores(query, k=k)
         
         search_results = []
-        for doc in results:
-            search_results.append({
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "source_filename": doc.metadata.get("source_filename", "Unknown")
-            })
+        for doc, score in results_with_scores:
+            # Only include documents above the similarity threshold
+            if score >= similarity_threshold:
+                search_results.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "source_filename": doc.metadata.get("source_filename", "Unknown"),
+                    "similarity_score": score
+                })
         
-        logger.info(f"Found {len(search_results)} results for query: {query[:50]}...")
+        # Sort by similarity score in descending order
+        search_results.sort(key=lambda x: x["similarity_score"], reverse=True)
+        
+        logger.info(f"Found {len(search_results)} results above threshold {similarity_threshold} for query: {query[:50]}...")
         return search_results
         
     except Exception as e:
