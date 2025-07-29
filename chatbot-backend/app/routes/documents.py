@@ -141,26 +141,35 @@ async def delete_document(file_hash: str):
     try:
         vectorstore = await get_vectorstore()
         
-        # First, check if document exists and get info
-        try:
-            docs = await vectorstore.asimilarity_search("", k=1, filter={"file_hash": file_hash})
-            if not docs:
+        # Get all chunk IDs and filename for this file_hash using direct SQL query
+        from app.db.connection import get_async_engine
+        engine = get_async_engine()
+        
+        async with engine.begin() as conn:
+            # Get all chunk IDs and filename that match the file_hash
+            result = await conn.execute(
+                text("SELECT id, cmetadata->>'source_filename' FROM langchain_pg_embedding WHERE cmetadata->>'file_hash' = :file_hash"),
+                {"file_hash": file_hash}
+            )
+            rows = result.fetchall()
+            
+            if not rows:
                 raise HTTPException(
                     status_code=404,
                     detail=f"Document with hash '{file_hash}' not found"
                 )
             
-            filename = docs[0].metadata.get("source_filename", "Unknown")
-        except Exception as e:
-            logger.error(f"Error checking document existence: {str(e)}")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Document with hash '{file_hash}' not found"
-            )
+            chunk_ids = [str(row[0]) for row in rows]
+            filename = rows[0][1] or "Unknown"  # Get filename from first row
         
-        # Delete using LangChain's delete method
-        deleted_ids = await vectorstore.adelete(filter={"file_hash": file_hash})
-        deleted_count = len(deleted_ids) if deleted_ids else 0
+        if not chunk_ids:
+            deleted_count = 0
+            logger.warning(f"No chunks found for file_hash: {file_hash}")
+        else:
+            # Delete using the proper adelete method with chunk IDs
+            logger.info(f"Deleting {len(chunk_ids)} chunks for file_hash: {file_hash}")
+            await vectorstore.adelete(ids=chunk_ids)
+            deleted_count = len(chunk_ids)
         
         logger.info(f"Deleted {deleted_count} chunks for document: {filename} (hash: {file_hash})")
         

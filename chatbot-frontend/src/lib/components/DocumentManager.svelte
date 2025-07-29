@@ -59,8 +59,8 @@
 			const data = await response.json();
 			console.log('Delete result:', data);
 
-			// Remove from local list
-			documents = documents.filter(doc => doc.file_hash !== file_hash);
+			// Refresh the document list from server to ensure consistency
+			await loadDocuments();
 		} catch (err) {
 			console.error('Error deleting document:', err);
 			error = `Failed to delete ${filename}: ${err instanceof Error ? err.message : 'Unknown error'}`;
