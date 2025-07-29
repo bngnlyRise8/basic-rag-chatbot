@@ -141,43 +141,44 @@ async def delete_document(file_hash: str):
     try:
         vectorstore = await get_vectorstore()
         
-        # Get all chunk IDs and filename for this file_hash using direct SQL query
-        from app.db.connection import get_async_engine
-        engine = get_async_engine()
+        # Use while loop to delete all chunks with this file_hash in batches
+        total_deleted = 0
+        filename = "Unknown"
         
-        async with engine.begin() as conn:
-            # Get all chunk IDs and filename that match the file_hash
-            result = await conn.execute(
-                text("SELECT id, cmetadata->>'source_filename' FROM langchain_pg_embedding WHERE cmetadata->>'file_hash' = :file_hash"),
-                {"file_hash": file_hash}
+        # Get first batch of chunks with this file_hash
+        batch_docs = await vectorstore.asimilarity_search("", k=1000, filter={"file_hash": file_hash})
+        print(batch_docs)
+        
+        if not batch_docs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document with hash '{file_hash}' not found"
             )
-            rows = result.fetchall()
-            
-            if not rows:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Document with hash '{file_hash}' not found"
-                )
-            
-            chunk_ids = [str(row[0]) for row in rows]
-            filename = rows[0][1] or "Unknown"  # Get filename from first row
         
-        if not chunk_ids:
-            deleted_count = 0
-            logger.warning(f"No chunks found for file_hash: {file_hash}")
-        else:
-            # Delete using the proper adelete method with chunk IDs
-            logger.info(f"Deleting {len(chunk_ids)} chunks for file_hash: {file_hash}")
-            await vectorstore.adelete(ids=chunk_ids)
-            deleted_count = len(chunk_ids)
+        filename = batch_docs[0].metadata.get("source_filename", "Unknown")
         
-        logger.info(f"Deleted {deleted_count} chunks for document: {filename} (hash: {file_hash})")
+        # Keep deleting batches until no more chunks remain
+        while batch_docs:
+            doc_ids = [doc.id for doc in batch_docs]
+            
+            # Delete this batch
+            await vectorstore.adelete(ids=doc_ids)
+            batch_deleted = len(doc_ids)
+            total_deleted += batch_deleted
+            
+            logger.info(f"Deleted batch of {batch_deleted} chunks (total so far: {total_deleted})")
+            
+            # Get next batch for the next iteration
+            batch_docs = await vectorstore.asimilarity_search("", k=1000, filter={"file_hash": file_hash})
+        
+        
+        logger.info(f"Deleted {total_deleted} chunks for document: {filename} (hash: {file_hash})")
         
         return DeleteResponse(
             filename=filename,
-            deleted_chunks=deleted_count,
+            deleted_chunks=total_deleted,
             status="success",
-            message=f"Successfully deleted {deleted_count} chunks"
+            message=f"Successfully deleted {total_deleted} chunks"
         )
         
     except HTTPException:
